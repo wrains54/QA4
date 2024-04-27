@@ -2,6 +2,7 @@ import tkinter as tk
 from tkinter import messagebox, simpledialog, Toplevel, Label, Entry, Button
 import sqlite3
 from datetime import datetime, timedelta
+from tkcalendar import DateEntry
 
 class LibraryApp:
     def __init__(self, root):
@@ -75,6 +76,44 @@ class LibraryApp:
         overdue_books = self.db.execute('SELECT title, due_date FROM books JOIN transactions ON books.book_id = transactions.book_id WHERE return_date IS NULL AND due_date < ?', (datetime.now().date(),)).fetchall()
         message = "Overdue Books:\n\n" + "\n".join([f"{book['title']} was due on {book['due_date']}" for book in overdue_books])
         messagebox.showinfo("Notifications", message if overdue_books else "No overdue books.")
+        def checkout_return_book(self, action):
+        window = Toplevel(self.root)
+        window.title(f"Book Check {action}")
+        Label(window, text="Book ID:").pack()
+        book_id_entry = Entry(window)
+        book_id_entry.pack()
+
+        if action == "out":
+            Label(window, text="Checkout Date (YYYY-MM-DD):").pack()
+            checkout_date_entry = DateEntry(window)
+            checkout_date_entry.pack()
+
+            Label(window, text="Due Date:").pack()
+            due_date_entry = DateEntry(window)
+            due_date_entry.pack()
+
+            Button(window, text=f"Check {action}", command=lambda: self.process_checkout(
+                book_id_entry.get(), checkout_date_entry.get(), due_date_entry.get(), window)).pack()
+        else:
+            Button(window, text=f"Check {action}", command=lambda: self.process_return(
+                book_id_entry.get(), window)).pack()
+
+    def process_checkout(self, book_id, checkout_date, due_date, window):
+        # Update the book status and record the transaction
+        self.db.execute('UPDATE books SET status="checked out" WHERE book_id=?', (book_id,))
+        self.db.execute('INSERT INTO transactions (book_id, checkout_date, due_date) VALUES (?, ?, ?)',
+                        (book_id, checkout_date, due_date))
+        self.db.commit()
+        window.destroy()
+        messagebox.showinfo("Success", "Book checked out successfully!")
+
+    def process_return(self, book_id, window):
+        self.db.execute('UPDATE books SET status="available" WHERE book_id=?', (book_id,))
+        self.db.execute('UPDATE transactions SET return_date=? WHERE book_id=? AND return_date IS NULL',
+                        (datetime.now().strftime('%Y-%m-%d'), book_id))
+        self.db.commit()
+        window.destroy()
+        messagebox.showinfo("Success", "Book returned successfully!")
 
 # GUI setup
 root = tk.Tk()
