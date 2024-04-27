@@ -1,22 +1,49 @@
 import tkinter as tk
 from tkinter import messagebox, simpledialog, Toplevel, Label, Entry, Button
 import sqlite3
-from datetime import datetime, timedelta
 from tkcalendar import DateEntry
+from datetime import datetime
 
 class LibraryApp:
     def __init__(self, root):
         self.root = root
         self.root.title("Library Management System")
-        self.root.config(bg='lightgray')
-        self.db = sqlite3.connect('library.db')
-        self.db.row_factory = sqlite3.Row  # Access columns by names
+        self.root.geometry("400x300")
+        self.setup_database()  # Call to setup database
+        # Setup buttons and other UI components
 
-        Button(self.root, text="Add or Update Book", command=self.manage_books).pack(pady=10)
-        Button(self.root, text="Search Books", command=self.search_books).pack(pady=10)
-        Button(self.root, text="Check Out Book", command=lambda: self.checkout_return_book("out")).pack(pady=10)
-        Button(self.root, text="Return Book", command=lambda: self.checkout_return_book("in")).pack(pady=10)
-        Button(self.root, text="Show Notifications", command=self.show_notifications).pack(pady=10)
+    def setup_database(self):
+        db = sqlite3.connect('library.db')
+        cursor = db.cursor()
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS books (
+                book_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                title TEXT NOT NULL,
+                author TEXT NOT NULL,
+                isbn TEXT UNIQUE,
+                status TEXT DEFAULT 'available'
+            );
+        ''')
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS transactions (
+                transaction_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                book_id INTEGER NOT NULL,
+                member_id INTEGER,  # Assuming you have a members table as well
+                checkout_date DATE,
+                due_date DATE,
+                return_date DATE,
+                FOREIGN KEY (book_id) REFERENCES books(book_id)
+                FOREIGN KEY (member_id) REFERENCES members(member_id)  # Ensure the members table is created
+            );
+        ''')
+        db.commit()
+        db.close()
+
+        Button(root, text="Add or Update Book", command=self.manage_books).pack(pady=10)
+        Button(root, text="Search Books", command=self.search_books).pack(pady=10)
+        Button(root, text="Check Out Book", command=lambda: self.checkout_return_book("out")).pack(pady=10)
+        Button(root, text="Return Book", command=lambda: self.checkout_return_book("in")).pack(pady=10)
+        Button(root, text="Show Notifications", command=self.show_notifications).pack(pady=10)
 
     def manage_books(self):
         window = Toplevel(self.root)
@@ -51,32 +78,19 @@ class LibraryApp:
 
     def search_books(self):
         search_term = simpledialog.askstring("Search", "Enter title, author, or ISBN:", parent=self.root)
-        books = self.db.execute('SELECT * FROM books WHERE title LIKE ? OR author LIKE ? OR isbn LIKE ?', 
-                                ('%'+search_term+'%', '%'+search_term+'%', '%'+search_term+'%')).fetchall()
+        books = self.db.execute('''
+            SELECT books.*, transactions.due_date 
+            FROM books 
+            LEFT JOIN transactions ON books.book_id = transactions.book_id AND transactions.return_date IS NULL
+            WHERE title LIKE ? OR author LIKE ? OR isbn LIKE ?
+        ''', ('%'+search_term+'%', '%'+search_term+'%', '%'+search_term+'%')).fetchall()
         if books:
-            message = "\n".join([f"ID: {book['book_id']}, Title: {book['title']}, Author: {book['author']}, ISBN: {book['isbn']}, Status: {book['status']}" for book in books])
+            message = "\n".join([f"ID: {book['book_id']}, Title: {book['title']}, Author: {book['author']}, ISBN: {book['isbn']}, Status: {book['status']}, Due: {book['due_date'] or 'N/A'}" for book in books])
             messagebox.showinfo("Search Results", message)
         else:
             messagebox.showinfo("Search Results", "No books found.")
 
     def checkout_return_book(self, action):
-        book_id = simpledialog.askstring("Book ID", f"Enter Book ID to check {action}:", parent=self.root)
-        if action == "out":
-            self.db.execute('UPDATE books SET status="checked out" WHERE book_id=?', (book_id,))
-            due_date = datetime.now() + timedelta(days=14)
-            self.db.execute('INSERT INTO transactions (book_id, checkout_date, due_date) VALUES (?, ?, ?)', 
-                            (book_id, datetime.now().date(), due_date.date()))
-        else:
-            self.db.execute('UPDATE books SET status="available" WHERE book_id=?', (book_id,))
-            self.db.execute('UPDATE transactions SET return_date=? WHERE book_id=? AND return_date IS NULL', (datetime.now().date(), book_id))
-        self.db.commit()
-        messagebox.showinfo("Success", f"Book checked {action} successfully!")
-
-    def show_notifications(self):
-        overdue_books = self.db.execute('SELECT title, due_date FROM books JOIN transactions ON books.book_id = transactions.book_id WHERE return_date IS NULL AND due_date < ?', (datetime.now().date(),)).fetchall()
-        message = "Overdue Books:\n\n" + "\n".join([f"{book['title']} was due on {book['due_date']}" for book in overdue_books])
-        messagebox.showinfo("Notifications", message if overdue_books else "No overdue books.")
-        def checkout_return_book(self, action):
         window = Toplevel(self.root)
         window.title(f"Book Check {action}")
         Label(window, text="Book ID:").pack()
@@ -84,25 +98,20 @@ class LibraryApp:
         book_id_entry.pack()
 
         if action == "out":
-            Label(window, text="Checkout Date (YYYY-MM-DD):").pack()
-            checkout_date_entry = DateEntry(window)
-            checkout_date_entry.pack()
-
             Label(window, text="Due Date:").pack()
             due_date_entry = DateEntry(window)
             due_date_entry.pack()
 
             Button(window, text=f"Check {action}", command=lambda: self.process_checkout(
-                book_id_entry.get(), checkout_date_entry.get(), due_date_entry.get(), window)).pack()
+                book_id_entry.get(), due_date_entry.get_date(), window)).pack()
         else:
             Button(window, text=f"Check {action}", command=lambda: self.process_return(
                 book_id_entry.get(), window)).pack()
 
-    def process_checkout(self, book_id, checkout_date, due_date, window):
-        # Update the book status and record the transaction
+    def process_checkout(self, book_id, due_date, window):
         self.db.execute('UPDATE books SET status="checked out" WHERE book_id=?', (book_id,))
         self.db.execute('INSERT INTO transactions (book_id, checkout_date, due_date) VALUES (?, ?, ?)',
-                        (book_id, checkout_date, due_date))
+                        (book_id, datetime.now().strftime('%Y-%m-%d'), due_date.strftime('%Y-%m-%d')))
         self.db.commit()
         window.destroy()
         messagebox.showinfo("Success", "Book checked out successfully!")
@@ -115,7 +124,17 @@ class LibraryApp:
         window.destroy()
         messagebox.showinfo("Success", "Book returned successfully!")
 
+    def show_notifications(self):
+        overdue_books = self.db.execute('''
+            SELECT title, due_date FROM books 
+            JOIN transactions ON books.book_id = transactions.book_id 
+            WHERE return_date IS NULL AND due_date < ?
+        ''', (datetime.now().strftime('%Y-%m-%d'),)).fetchall()
+        message = "Overdue Books:\n\n" + "\n".join([f"{book['title']} was due on {book['due_date']}" for book in overdue_books])
+        messagebox.showinfo("Notifications", message if overdue_books else "No overdue books.")
+
 # GUI setup
 root = tk.Tk()
 app = LibraryApp(root)
 root.mainloop()
+
