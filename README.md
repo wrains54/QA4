@@ -16,8 +16,3 @@ To set up the Library Management System on your local machine, follow these step
 - Python 3.8 or higher
 - tkinter for the GUI
 - sqlite3 for database management
-
-### Setup
-1. Clone this repository or download the ZIP file.
-   ```bash
-   git clone https://your-repository-url
